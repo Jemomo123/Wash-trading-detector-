@@ -48,7 +48,7 @@ manual_chain = st.sidebar.selectbox(
 )
 manual_contract_input = st.sidebar.text_input(
     "Contract Address or Symbol",
-    placeholder="e.g. 0x... or CASHCAT"
+    placeholder="e.g. 0x... or musebo"
 )
 
 if st.sidebar.button("Run Manual Audit", use_container_width=True):
@@ -78,39 +78,44 @@ max_wallet_reuse = st.sidebar.slider(
 ) / 100.0
 
 # ==========================================
-# 3. AUTOMATED TREND INTERSECTION
+# 3. STREAMLINED FAILOVER FETCHING SYSTEM
 # ==========================================
 def fetch_trending_intersection(chain_name: str) -> list:
-    tokens = []
+    c_lower = chain_name.lower()
+    
+    # Tier 1: Primary GMGN Endpoint
     try:
-        headers = {"User-Agent": "Mozilla/5.0"}
-        resp = requests.get(f"https://gmgn.ai/defi/quotation/v1/ranking/{chain_name.lower()}/swaps/1h", headers=headers, timeout=3)
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        url = f"https://gmgn.ai/defi/quotation/v1/rank/{c_lower}/swaps/1h?orderby=volume&direction=desc"
+        resp = requests.get(url, headers=headers, timeout=2)
         if resp.status_code == 200:
             data = resp.json().get("data", {}).get("rank", [])
-            tokens = [item.get("symbol") for item in data[:5] if item.get("symbol")]
-            if tokens: return tokens
+            tokens = [item.get("symbol") for item in data[:8] if item.get("symbol")]
+            if tokens: 
+                return tokens
     except Exception:
         pass
 
+    # Tier 2: Birdeye Trending Failover API
     try:
-        resp = requests.get("https://api.dexscreener.com/latest/dex/trending/tokens", timeout=3)
+        headers = {"User-Agent": "Mozilla/5.0", "x-chain": c_lower if c_lower in ["solana", "bsc", "ethereum"] else "solana"}
+        url = "https://public-api.birdeye.so/defi/token_trending?sort_by=rank&sort_type=asc&limit=8"
+        resp = requests.get(url, headers=headers, timeout=2)
         if resp.status_code == 200:
-            pairs = resp.json().get("pairs", [])
-            filtered = [
-                p.get("baseToken", {}).get("symbol") 
-                for p in pairs 
-                if p.get("chainId", "").lower() == chain_name.lower() and p.get("baseToken", {}).get("symbol")
-            ]
-            if filtered: return list(set(filtered))[:5]
+            items = resp.json().get("data", {}).get("tokens", [])
+            tokens = [i.get("symbol") for i in items if i.get("symbol")]
+            if tokens:
+                return tokens
     except Exception:
         pass
 
+    # Tier 3: Hardcoded Fallback Map (Guaranteed Preset)
     fallback_map = {
-        "Solana": ["POPCAT", "WIF", "MYRO"],
-        "BNB": ["FLOKI", "BABYDOGE"],
-        "Robinhood": ["CASHCAT", "DIH", "HOODIE"]
+        "Solana": ["POPCAT", "WIF", "MYRO", "BOME", "SLERF"],
+        "BNB": ["FLOKI", "BABYDOGE", "CAKE", "BSCS"],
+        "Robinhood": ["musebo", "MEME", "BONER", "SHROOM", "Nautil", "MUSEPA", "UBIK", "musegr"]
     }
-    return fallback_map.get(chain_name, [])
+    return fallback_map.get(chain_name, ["TOKEN"])
 
 # ==========================================
 # 4. WASH TRADING ENGINE
@@ -162,9 +167,9 @@ def generate_mock_trade():
     trending_tokens = fetch_trending_intersection(chain)
     symbol = random.choice(trending_tokens) if trending_tokens else "TOKEN"
     
-    is_bot = random.random() < 0.35
+    is_bot = random.random() < 0.40
     trader = "0xBot1234...5678" if is_bot else f"0x{random.randint(1000, 9999)}...{random.randint(1000, 9999)}"
-    usd_val = random.uniform(0.1, 0.8) if is_bot else random.uniform(5.0, 500.0)
+    usd_val = random.uniform(0.1, 0.7) if is_bot else random.uniform(5.0, 500.0)
 
     return {
         "chain": chain,
@@ -179,7 +184,7 @@ def generate_mock_trade():
 # 6. UI DASHBOARD
 # ==========================================
 st.markdown("## 🛡️ Multi-Chain Wash Trade Detector")
-st.caption("Tap the top-left `>>` menu to open Manual Coin Audit")
+st.caption("Live trending scanner with GMGN & Birdeye failover routing")
 
 col1, col2 = st.columns([2, 1])
 with col1:
@@ -240,7 +245,7 @@ for chain in chains_to_show:
     chain_tokens = {k: v for k, v in st.session_state.monitored_tokens.items() if k[0] == chain}
     
     if not chain_tokens:
-        st.info(f"Waiting for trending data on {chain}...")
+        st.info(f"Querying trending endpoints for {chain}...")
         continue
 
     chain_data = []
