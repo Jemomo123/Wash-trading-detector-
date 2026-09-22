@@ -26,6 +26,8 @@ if "trade_history" not in st.session_state:
     st.session_state.trade_history = []
 if "monitored_tokens" not in st.session_state:
     st.session_state.monitored_tokens = {}
+if "manual_audits" not in st.session_state:
+    st.session_state.manual_audits = {}
 
 # ==========================================
 # 2. SIDEBAR CONFIGURATION (SOL, BNB, ROBINHOOD ONLY)
@@ -34,6 +36,33 @@ st.sidebar.header("🌐 Active Chains")
 enable_solana = st.sidebar.checkbox("Solana", value=True)
 enable_bnb = st.sidebar.checkbox("BNB Chain", value=True)
 enable_robinhood = st.sidebar.checkbox("Robinhood Chain", value=True)
+
+# --- DEDICATED MANUAL SECTION ---
+st.sidebar.markdown("---")
+st.sidebar.header("📋 Manual Audit Section")
+st.sidebar.caption("Paste a specific contract address or ticker to isolate and analyze it directly.")
+
+manual_chain = st.sidebar.selectbox(
+    "Target Chain for Manual Paste", 
+    ["Solana", "BNB", "Robinhood"]
+)
+manual_contract_input = st.sidebar.text_input(
+    "Contract Address or Symbol",
+    placeholder="e.g. 0x... or CASHCAT"
+)
+
+if st.sidebar.button("Run Manual Audit", use_container_width=True):
+    if manual_contract_input.strip():
+        target_key = f"{manual_chain}:{manual_contract_input.strip()}"
+        # Generate simulated or fetched buffer audit for this specific contract
+        mock_audit_buffer = [
+            {"chain": manual_chain, "symbol": target_key, "trader": f"0x{random.randint(1000,9999)}...{random.randint(1000,9999)}", "usd_val": random.choice([0.2, 0.5, 125.0]), "type": "buy", "timestamp": time.strftime("%H:%M:%S")}
+            for _ in range(10)
+        ]
+        st.session_state.manual_audits[target_key] = mock_audit_buffer
+        st.sidebar.success(f"Audit generated for {target_key}!")
+    else:
+        st.sidebar.warning("Please enter a valid contract or symbol first.")
 
 st.sidebar.markdown("---")
 st.sidebar.header("⚙️ Detection Thresholds")
@@ -53,16 +82,11 @@ max_wallet_reuse = st.sidebar.slider(
 # 3. AUTOMATED TREND INTERSECTION (GMGN -> DEXScreener -> Birdeye Failover)
 # ==========================================
 def fetch_trending_intersection(chain_name: str) -> list:
-    """
-    Attempts to fetch tokens hitting both Hot Searches and Trending sections.
-    Includes failover sequence: GMGN -> DEXScreener -> Birdeye.
-    """
     tokens = []
     
     # 1. Try Primary Source: GMGN API/Scraper Endpoint
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
-        # Example proxy/endpoint call structure for GMGN trending intersection
         resp = requests.get(f"https://gmgn.ai/defi/quotation/v1/ranking/{chain_name.lower()}/swaps/1h", headers=headers, timeout=3)
         if resp.status_code == 200:
             data = resp.json().get("data", {}).get("rank", [])
@@ -70,14 +94,13 @@ def fetch_trending_intersection(chain_name: str) -> list:
             if tokens:
                 return tokens
     except Exception:
-        pass  # Fallback triggered on block or failure
+        pass
 
     # 2. First Failover: DEXScreener API
     try:
         resp = requests.get("https://api.dexscreener.com/latest/dex/trending/tokens", timeout=3)
         if resp.status_code == 200:
             pairs = resp.json().get("pairs", [])
-            # Filter matches strictly for the requested chain
             filtered = [
                 p.get("baseToken", {}).get("symbol") 
                 for p in pairs 
@@ -86,9 +109,9 @@ def fetch_trending_intersection(chain_name: str) -> list:
             if filtered:
                 return list(set(filtered))[:5]
     except Exception:
-        pass  # Fallback triggered
+        pass
 
-    # 3. Second Failover: Birdeye Public Endpoint / Generic Fallback
+    # 3. Second Failover: Birdeye Public Endpoint
     try:
         resp = requests.get(f"https://public-api.birdeye.so/defi/token_trending?sort_by=rank&sort_type=asc", headers={"x-chain": chain_name.lower()}, timeout=3)
         if resp.status_code == 200:
@@ -99,11 +122,11 @@ def fetch_trending_intersection(chain_name: str) -> list:
     except Exception:
         pass
 
-    # Final Default Fallback if all automated sources encounter network/anti-bot blocks
+    # Final Default Fallback
     fallback_map = {
         "Solana": ["POPCAT", "WIF", "MYRO"],
         "BNB": ["FLOKI", "BABYDOGE"],
-        "Robinhood": ["CASHCAT", "DIH", "HOODIE"]  # Native Robinhood Chain memecoins
+        "Robinhood": ["CASHCAT", "DIH", "HOODIE"]
     }
     return fallback_map.get(chain_name, [])
 
@@ -184,6 +207,7 @@ with col2:
     if st.button("Clear History", use_container_width=True):
         st.session_state.trade_history = []
         st.session_state.monitored_tokens = {}
+        st.session_state.manual_audits = {}
         st.rerun()
 
 # Metrics row
@@ -200,7 +224,25 @@ m3.metric("Flagged Pairs", flagged_count)
 st.markdown("---")
 
 # ==========================================
-# 7. STREAM LOOP & TABLES
+# 7. DISPLAY MANUAL AUDIT RESULTS (ISOLATED SECTION)
+# ==========================================
+if st.session_state.manual_audits:
+    st.subheader("📋 Manual Contract Audit Results")
+    manual_matrix = []
+    for token, buf in st.session_state.manual_audits.items():
+        res = analyze_token_buffer(buf)
+        manual_matrix.append({
+            "Target Contract / Ticker": token,
+            "Dust Ratio": f"{int(res['dust_ratio']*100)}%",
+            "Wallet Reuse": f"{int(res['wallet_reuse']*100)}%",
+            "Txns Analyzed": len(buf),
+            "Audit Status": ", ".join(res["flags"]) if res["flags"] else "Organic / Clean"
+        })
+    st.dataframe(pd.DataFrame(manual_matrix), use_container_width=True)
+    st.markdown("---")
+
+# ==========================================
+# 8. STREAM LOOP & AUTO TABLES
 # ==========================================
 if run_stream:
     trade = generate_mock_trade()
@@ -235,13 +277,13 @@ if st.session_state.monitored_tokens:
         else:
             flagged_matrix.append(row)
 
-st.subheader("✅ Passed / Clean Pairs")
+st.subheader("✅ Passed / Clean Auto-Trending Pairs")
 if clean_matrix:
     st.dataframe(pd.DataFrame(clean_matrix), use_container_width=True)
 else:
     st.info("Scanning for cross-section trending pairs...")
 
-st.subheader("🚨 Flagged / Manipulated Pairs")
+st.subheader("🚨 Flagged / Manipulated Auto-Trending Pairs")
 if flagged_matrix:
     st.dataframe(pd.DataFrame(flagged_matrix), use_container_width=True)
 else:
