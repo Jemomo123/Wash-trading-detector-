@@ -30,7 +30,7 @@ if "manual_audits" not in st.session_state:
     st.session_state.manual_audits = {}
 
 # ==========================================
-# 2. SIDEBAR CONFIGURATION (SOL, BNB, ROBINHOOD ONLY)
+# 2. SIDEBAR CONFIGURATION
 # ==========================================
 st.sidebar.header("🌐 Active Chains")
 enable_solana = st.sidebar.checkbox("Solana", value=True)
@@ -40,7 +40,7 @@ enable_robinhood = st.sidebar.checkbox("Robinhood Chain", value=True)
 # --- MANUAL AUDIT SECTION ---
 st.sidebar.markdown("---")
 st.sidebar.header("📋 Manual Coin Audit")
-st.sidebar.caption("Paste a specific contract or ticker to analyze it directly.")
+st.sidebar.caption("Paste a specific contract or symbol to analyze it directly.")
 
 manual_chain = st.sidebar.selectbox(
     "Target Chain", 
@@ -56,7 +56,7 @@ if st.sidebar.button("Run Manual Audit", use_container_width=True):
         target_key = manual_contract_input.strip()
         mock_audit_buffer = [
             {"chain": manual_chain, "symbol": target_key, "trader": f"0x{random.randint(1000,9999)}...{random.randint(1000,9999)}", "usd_val": random.choice([0.2, 0.5, 125.0]), "type": "buy", "timestamp": time.strftime("%H:%M:%S")}
-            for _ in range(10)
+            for _ in range(15)
         ]
         st.session_state.manual_audits[f"{manual_chain}:{target_key}"] = mock_audit_buffer
         st.sidebar.success(f"Audited {target_key} on {manual_chain}!")
@@ -78,29 +78,29 @@ max_wallet_reuse = st.sidebar.slider(
 ) / 100.0
 
 # ==========================================
-# 3. STREAMLINED FAILOVER FETCHING SYSTEM
+# 3. STRICT LIVE-ONLY FETCHING (NO FAKE PRESETS)
 # ==========================================
-def fetch_trending_intersection(chain_name: str) -> list:
+def fetch_live_trending(chain_name: str) -> list:
     c_lower = chain_name.lower()
     
-    # Tier 1: Primary GMGN Endpoint
+    # Attempt 1: GMGN API (Full Payload Parsing)
     try:
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
         url = f"https://gmgn.ai/defi/quotation/v1/rank/{c_lower}/swaps/1h?orderby=volume&direction=desc"
-        resp = requests.get(url, headers=headers, timeout=2)
+        resp = requests.get(url, headers=headers, timeout=3)
         if resp.status_code == 200:
             data = resp.json().get("data", {}).get("rank", [])
-            tokens = [item.get("symbol") for item in data[:8] if item.get("symbol")]
+            tokens = [item.get("symbol") for item in data if item.get("symbol")]
             if tokens: 
                 return tokens
     except Exception:
         pass
 
-    # Tier 2: Birdeye Trending Failover API
+    # Attempt 2: Birdeye API
     try:
         headers = {"User-Agent": "Mozilla/5.0", "x-chain": c_lower if c_lower in ["solana", "bsc", "ethereum"] else "solana"}
-        url = "https://public-api.birdeye.so/defi/token_trending?sort_by=rank&sort_type=asc&limit=8"
-        resp = requests.get(url, headers=headers, timeout=2)
+        url = "https://public-api.birdeye.so/defi/token_trending?sort_by=rank&sort_type=asc&limit=50"
+        resp = requests.get(url, headers=headers, timeout=3)
         if resp.status_code == 200:
             items = resp.json().get("data", {}).get("tokens", [])
             tokens = [i.get("symbol") for i in items if i.get("symbol")]
@@ -109,13 +109,8 @@ def fetch_trending_intersection(chain_name: str) -> list:
     except Exception:
         pass
 
-    # Tier 3: Hardcoded Fallback Map (Guaranteed Preset)
-    fallback_map = {
-        "Solana": ["POPCAT", "WIF", "MYRO", "BOME", "SLERF"],
-        "BNB": ["FLOKI", "BABYDOGE", "CAKE", "BSCS"],
-        "Robinhood": ["musebo", "MEME", "BONER", "SHROOM", "Nautil", "MUSEPA", "UBIK", "musegr"]
-    }
-    return fallback_map.get(chain_name, ["TOKEN"])
+    # Return empty list if live connection fails (No fake fallback lies)
+    return []
 
 # ==========================================
 # 4. WASH TRADING ENGINE
@@ -164,8 +159,12 @@ def generate_mock_trade():
     if not active_chains: return None
 
     chain = random.choice(active_chains)
-    trending_tokens = fetch_trending_intersection(chain)
-    symbol = random.choice(trending_tokens) if trending_tokens else "TOKEN"
+    trending_tokens = fetch_live_trending(chain)
+    
+    if not trending_tokens:
+        return None  # Skip if live endpoints are unreachable
+
+    symbol = random.choice(trending_tokens)
     
     is_bot = random.random() < 0.40
     trader = "0xBot1234...5678" if is_bot else f"0x{random.randint(1000, 9999)}...{random.randint(1000, 9999)}"
@@ -184,7 +183,7 @@ def generate_mock_trade():
 # 6. UI DASHBOARD
 # ==========================================
 st.markdown("## 🛡️ Multi-Chain Wash Trade Detector")
-st.caption("Live trending scanner with GMGN & Birdeye failover routing")
+st.caption("Strict Live-Feed Scanner (No Fallback Mappings)")
 
 col1, col2 = st.columns([2, 1])
 with col1:
@@ -238,14 +237,14 @@ if st.session_state.manual_audits:
     st.dataframe(pd.DataFrame(manual_rows), use_container_width=True)
     st.markdown("---")
 
-# Per-Chain Trending Breakdown
+# Per-Chain Breakdown
 for chain in chains_to_show:
-    st.subheader(f"🌐 Chain: {chain} (Trending & Wash Analysis)")
+    st.subheader(f"🌐 Chain: {chain}")
     
     chain_tokens = {k: v for k, v in st.session_state.monitored_tokens.items() if k[0] == chain}
     
     if not chain_tokens:
-        st.info(f"Querying trending endpoints for {chain}...")
+        st.warning(f"⚠️ Unable to fetch live trending feed for {chain} from GMGN/Birdeye endpoints.")
         continue
 
     chain_data = []
