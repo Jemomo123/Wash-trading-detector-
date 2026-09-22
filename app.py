@@ -54,7 +54,6 @@ manual_contract_input = st.sidebar.text_input(
 if st.sidebar.button("Run Manual Audit", use_container_width=True):
     if manual_contract_input.strip():
         target_key = f"{manual_chain}:{manual_contract_input.strip()}"
-        # Generate simulated or fetched buffer audit for this specific contract
         mock_audit_buffer = [
             {"chain": manual_chain, "symbol": target_key, "trader": f"0x{random.randint(1000,9999)}...{random.randint(1000,9999)}", "usd_val": random.choice([0.2, 0.5, 125.0]), "type": "buy", "timestamp": time.strftime("%H:%M:%S")}
             for _ in range(10)
