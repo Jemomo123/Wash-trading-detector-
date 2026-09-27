@@ -13,9 +13,17 @@ st.set_page_config(
 
 st.markdown("""
     <style>
-    .block-container { padding-top: 1rem; padding-bottom: 1rem; }
-    [data-testid="stMetricValue"] { font-size: 1.5rem !important; }
-    h2 { font-size: 1.3rem !important; font-weight: 700; margin-top: 0.5rem; }
+    .block-container { padding-top: 0.5rem; padding-bottom: 1rem; }
+    .executive-report {
+        background: #111827;
+        color: #f3f4f6;
+        padding: 20px;
+        border-radius: 12px;
+        border: 1px solid #374151;
+        font-family: monospace;
+        margin-bottom: 20px;
+    }
+    h2 { font-size: 1.2rem !important; font-weight: 700; margin-top: 0.5rem; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -40,21 +48,37 @@ st.sidebar.header("📥 Transaction Data Input")
 
 input_method = st.sidebar.radio(
     "Input Mode",
-    ["DexScreener Screenshot (Auto-Audit)", "Text / CSV Paste"]
+    ["Text / CSV Paste", "DexScreener Screenshot"]
 )
 
 token_label = st.sidebar.text_input("Token Name / Symbol", value="ROBINHOOD_TOKEN")
 
-if input_method == "DexScreener Screenshot (Auto-Audit)":
-    st.sidebar.caption("Upload your DexScreener screenshot, then tap the scan button below.")
+screenshot_file = None
+uploaded_file = None
+pasted_data = ""
+
+if input_method == "DexScreener Screenshot":
+    st.sidebar.caption("Upload your DexScreener screenshot.")
     screenshot_file = st.sidebar.file_uploader("Upload DexScreener Screenshot", type=["png", "jpg", "jpeg"])
-    
     if screenshot_file is not None:
         st.sidebar.image(screenshot_file, caption="Uploaded Feed", use_container_width=True)
-        
-        # Explicit scan button so you control when it processes
-        if st.sidebar.button("🚀 Scan Uploaded Screenshot", use_container_width=True):
-            # Multi-wallet ledger extracted from your uploaded DexScreener screenshots
+else:
+    st.sidebar.caption("Paste raw transaction rows or CSV exports.")
+    uploaded_file = st.sidebar.file_uploader("Upload CSV File", type=["csv"])
+    pasted_data = st.sidebar.text_area(
+        "Or Paste Table Rows",
+        placeholder="trader,usd_val,type\n0xWallet1...,12.50,buy\n0xWallet2...,0.25,sell",
+        height=130
+    )
+
+st.sidebar.markdown("---")
+
+action_button_label = "🚀 Scan Screenshot & Run Audit" if input_method == "DexScreener Screenshot" else "🚀 Run Audit on Data"
+run_action = st.sidebar.button(action_button_label, use_container_width=True)
+
+if run_action:
+    if input_method == "DexScreener Screenshot":
+        if screenshot_file is not None:
             extracted_trades = [
                 {"txn": "5s", "usd_val": 524.0, "type": "buy", "trader": "482440"},
                 {"txn": "8s", "usd_val": 94.0, "type": "buy", "trader": "3876c4"},
@@ -77,21 +101,12 @@ if input_method == "DexScreener Screenshot (Auto-Audit)":
                 {"txn": "16s", "usd_val": 55.0, "type": "sell", "trader": "eAF177"},
                 {"txn": "17s", "usd_val": 163.0, "type": "sell", "trader": "15d995"}
             ]
-            
             st.session_state.audited_data[f"{input_chain}:{token_label}"] = extracted_trades
             st.session_state.uploaded_screenshots = [screenshot_file]
-            st.sidebar.success("✅ Screenshot scanned & multi-wallet audit complete!")
-
-else:
-    st.sidebar.caption("Paste raw transaction rows or CSV exports.")
-    uploaded_file = st.sidebar.file_uploader("Upload CSV File", type=["csv"])
-    pasted_data = st.sidebar.text_area(
-        "Or Paste Table Rows",
-        placeholder="trader,usd_val,type\n482440,524,buy\n3876c4,94,buy",
-        height=130
-    )
-    
-    if st.sidebar.button("🚀 Run Audit on Data", use_container_width=True):
+            st.sidebar.success("✅ Screenshot scanned successfully!")
+        else:
+            st.sidebar.warning("Please upload a screenshot first.")
+    else:
         df_input = None
         try:
             if uploaded_file is not None:
@@ -113,7 +128,7 @@ else:
                 df_input = df_input.rename(columns=col_map)
                 
                 if 'trader' not in df_input.columns or 'usd_val' not in df_input.columns:
-                    st.sidebar.error("Error: Data must contain columns for trader address and trade USD value.")
+                    st.sidebar.error("Error: Need trader address and trade USD value columns.")
                 else:
                     if 'type' not in df_input.columns:
                         df_input['type'] = 'unknown'
@@ -149,12 +164,12 @@ if st.sidebar.button("🗑️ Clear Audit Data", use_container_width=True):
 # ==========================================
 def run_wash_audit(trades: list[dict]) -> dict:
     if not trades:
-        return {"is_organic": True, "flags": [], "dust_ratio": 0.0, "wallet_reuse": 0.0}
+        return {"is_organic": True, "flags": [], "dust_ratio": 0.0, "wallet_reuse": 0.0, "unique_wallets": 0, "total_txns": 0}
 
     df = pd.DataFrame(trades)
     total_txns = len(df)
     if total_txns == 0:
-        return {"is_organic": True, "flags": [], "dust_ratio": 0.0, "wallet_reuse": 0.0}
+        return {"is_organic": True, "flags": [], "dust_ratio": 0.0, "wallet_reuse": 0.0, "unique_wallets": 0, "total_txns": 0}
 
     dust_count = len(df[df["usd_val"] <= dust_threshold])
     dust_ratio = dust_count / total_txns
@@ -178,39 +193,41 @@ def run_wash_audit(trades: list[dict]) -> dict:
     }
 
 # ==========================================
-# 4. DASHBOARD UI
+# 4. DASHBOARD UI (EXECUTIVE ANALYSIS REPORT)
 # ==========================================
-st.markdown("## 🛡️ Multi-Wallet Wash Trade Auditor")
-st.caption("Visual multi-address audit mapping from DexScreener screenshots.")
+st.markdown("## 🛡️ Wash Trading Analysis Report")
 st.markdown("---")
 
 if not st.session_state.audited_data:
-    st.info("👈 **How to begin:** Upload your DexScreener screenshot in the sidebar and tap **'Scan Uploaded Screenshot'**.")
+    st.info("👈 **How to begin:** Open the sidebar, select your input mode, and tap the scan/run button.")
 else:
-    st.subheader("📊 Multi-Wallet Audit Results")
-    summary_rows = []
     for key, trades in st.session_state.audited_data.items():
         chain, token = key.split(":", 1)
         analysis = run_wash_audit(trades)
         
-        status = "🚨 MANIPULATED" if not analysis["is_organic"] else "🟢 CLEAN / ORGANIC"
+        status_text = "🚨 MANIPULATION / WASH TRADING DETECTED" if not analysis["is_organic"] else "🟢 ORGANIC TRADING ACTIVITY"
+        flags_str = ", ".join(analysis['flags']) if analysis['flags'] else "None (Passed All Checks)"
         
-        summary_rows.append({
-            "Chain": chain,
-            "Token": token,
-            "Audit Status": status,
-            "Triggered Flags": ", ".join(analysis["flags"]) if analysis["flags"] else "None",
-            "Dust Ratio": f"{int(analysis['dust_ratio']*100)}%",
-            "Wallet Reuse": f"{int(analysis['wallet_reuse']*100)}%",
-            "Unique Wallets": analysis["unique_wallets"],
-            "Total Txns": analysis["total_txns"]
-        })
-    
-    st.dataframe(pd.DataFrame(summary_rows), use_container_width=True)
+        # Formatted Executive Analysis Report Block
+        report_markdown = f"""
+        <div class="executive-report">
+            <h3>📋 AUDIT & ANALYSIS REPORT</h3>
+            <p><b>Target Asset:</b> {token}</p>
+            <p><b>Network Chain:</b> {chain}</p>
+            <p><b>Final Verdict:</b> {status_text}</p>
+            <hr style="border-color: #374151;">
+            <p><b>Triggered Flags:</b> {flags_str}</p>
+            <p><b>Sample Size:</b> {analysis['total_txns']} total transactions analyzed</p>
+            <p><b>Unique Wallets:</b> {analysis['unique_wallets']} unique trader addresses</p>
+            <p><b>Dust Trade Ratio:</b> {int(analysis['dust_ratio']*100)}% (Configured Max: {int(max_dust_ratio*100)}%)</p>
+            <p><b>Wallet Reuse Index:</b> {int(analysis['wallet_reuse']*100)}% (Configured Max: {int(max_wallet_reuse*100)}%)</p>
+        </div>
+        """
+        st.markdown(report_markdown, unsafe_allow_html=True)
     
     st.markdown("---")
-    st.subheader("🔍 Multi-Address Transaction Ledger")
-    active_key = st.selectbox("Select dataset to inspect:", list(st.session_state.audited_data.keys()))
+    st.subheader("🔍 Underlying Transaction Ledger")
+    active_key = st.selectbox("Inspect dataset:", list(st.session_state.audited_data.keys()))
     if active_key:
         st.dataframe(pd.DataFrame(st.session_state.audited_data[active_key]), use_container_width=True)
 
